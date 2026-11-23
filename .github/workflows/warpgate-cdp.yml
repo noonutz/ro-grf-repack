@@ -1,0 +1,70 @@
+name: warpgate-cdp
+
+on:
+  workflow_dispatch:
+    inputs:
+      js:
+        description: "JS expression to evaluate in the page (default: dump text)"
+        required: false
+        default: "document.body.innerText.slice(0,4000)"
+
+jobs:
+  cdp:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WARPGATE
+        shell: pwsh
+        run: |
+          curl.exe -sL -o wg.zip https://mirror2.romirrors.com/downloads/Warpgate.zip
+          Expand-Archive wg.zip -DestinationPath wg -Force
+
+      - name: Launch with remote debugging
+        shell: pwsh
+        run: |
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222 --force-renderer-accessibility"
+          Start-Process -FilePath .\wg\Warpgate.exe
+          Start-Sleep -Seconds 28
+          $targets = Invoke-RestMethod http://127.0.0.1:9222/json
+          $targets | ForEach-Object { Write-Host ("TARGET {0} | {1} | {2}" -f $_.type, $_.title, $_.webSocketDebuggerUrl) }
+          $t = $targets | Where-Object { $_.type -eq 'page' } | Select-Object -First 1
+          if (-not $t) { Write-Host "NO PAGE TARGET"; exit 1 }
+          $ws = [System.Net.WebSockets.ClientWebSocket]::new()
+          $ws.ConnectAsync([Uri]$t.webSocketDebuggerUrl, [Threading.CancellationToken]::None).Wait()
+          Write-Host "WS connected"
+          function Send-Cdp([string]$method, $params) {
+            $msg = @{ id = (Get-Random); method = $method; params = $params } | ConvertTo-Json -Depth 10 -Compress
+            $bytes = [Text.Encoding]::UTF8.GetBytes($msg)
+            $ws.SendAsync([ArraySegment[byte]]::new($bytes), [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None).Wait()
+            $buf = New-Object byte[] 262144
+            $sb = New-Object System.Text.StringBuilder
+            do {
+              $seg = [ArraySegment[byte]]::new($buf)
+              $res = $ws.ReceiveAsync($seg, [Threading.CancellationToken]::None).Result
+              [void]$sb.Append([Text.Encoding]::UTF8.GetString($buf, 0, $res.Count))
+            } while (-not $res.EndOfMessage)
+            return $sb.ToString()
+          }
+          $expr = '${{ github.event.inputs.js }}'
+          $reply = Send-Cdp "Runtime.evaluate" @{ expression = $expr; returnByValue = $true; awaitPromise = $true }
+          Write-Host "=== CDP REPLY ==="
+          Write-Host $reply
+
+      - name: Screenshot
+        if: always()
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+          $bmp.Save("$PWD\cdp-screen.png", [System.Drawing.Imaging.ImageFormat]::Png)
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cdp
+          path: cdp-screen.png
