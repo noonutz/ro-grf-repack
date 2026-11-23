@@ -1,0 +1,106 @@
+name: warpgate-observe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  observe:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WARPGATE
+        shell: pwsh
+        run: |
+          curl.exe -sL -o wg.zip https://mirror2.romirrors.com/downloads/Warpgate.zip
+          Expand-Archive wg.zip -DestinationPath wg -Force
+
+      - name: Drive UI and stream screenshots
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force C:\gate | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class W5 {
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+            [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, int e);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+          }
+          "@
+          function Click([int]$x, [int]$y) {
+            [W5]::SetCursorPos($x, $y) | Out-Null
+            Start-Sleep -Milliseconds 250
+            [W5]::mouse_event(0x0002, 0, 0, 0, 0)
+            Start-Sleep -Milliseconds 80
+            [W5]::mouse_event(0x0004, 0, 0, 0, 0)
+          }
+          function Shot([string]$n) {
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$PWD\$n", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+          }
+          function Post([string]$msg) {
+            Write-Host $msg
+            try { gh issue comment 1 --repo noonutz/ro-grf-repack --body $msg | Out-Null } catch { Write-Host "post failed" }
+          }
+          function PostShot([string]$n) {
+            Shot $n
+            $url = $null
+            try { $url = (curl.exe -s -F "file=@$n" https://0x0.st).Trim() } catch {}
+            if (-not $url -or $url -notmatch '^https?://') {
+              try { $url = (curl.exe -s -F "reqtype=fileupload" -F "fileToUpload=@$n" https://catbox.moe/user/api.php).Trim() } catch {}
+            }
+            $files = Get-ChildItem C:\gate -Recurse -File -ErrorAction SilentlyContinue
+            $sum = 0; if ($files) { $sum = ($files | Measure-Object Length -Sum).Sum }
+            Post ("{0} | gate {1:N0} MB / {2} files | shot: {3}" -f $n, ($sum / 1MB), $files.Count, $url)
+          }
+          $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+          $cond = [System.Windows.Automation.Condition]::TrueCondition
+
+          Start-Process -FilePath .\wg\Warpgate.exe | Out-Null
+          Start-Sleep -Seconds 27
+          Click 672 679
+          Start-Sleep -Seconds 3
+          Click 507 310
+          Start-Sleep -Seconds 6
+          $dlg = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond) |
+                   Where-Object { $_.Current.ClassName -eq '#32770' } | Select-Object -First 1
+          if ($dlg) {
+            [W5]::SetForegroundWindow([IntPtr]$dlg.Current.NativeWindowHandle) | Out-Null
+            Start-Sleep -Seconds 1
+            Click 300 412
+            Start-Sleep -Milliseconds 600
+            [System.Windows.Forms.SendKeys]::SendWait("^a")
+            Start-Sleep -Milliseconds 200
+            [System.Windows.Forms.SendKeys]::SendWait("C:\gate")
+            Start-Sleep -Seconds 2
+            Click 446 442
+            Start-Sleep -Seconds 6
+          } else { Post "no picker dialog" }
+          PostShot "o1-gate-created.png"
+          Click 420 207
+          Start-Sleep -Seconds 8
+          PostShot "o2-after-install-click.png"
+          for ($i = 0; $i -lt 12; $i++) {
+            Start-Sleep -Seconds 30
+            PostShot ("o3-t{0}.png" -f $i)
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: observe
+          path: "*.png"
+          retention-days: 5
