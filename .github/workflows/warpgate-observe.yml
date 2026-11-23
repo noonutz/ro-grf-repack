@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Download WARPGATE
         shell: pwsh
@@ -26,22 +28,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           New-Item -ItemType Directory -Force C:\gate | Out-Null
+          git config user.email "runner@local"
+          git config user.name "runner"
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
           Add-Type @"
           using System;
           using System.Runtime.InteropServices;
-          public class W5 {
+          public class W6 {
             [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
             [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, int e);
             [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
           }
           "@
           function Click([int]$x, [int]$y) {
-            [W5]::SetCursorPos($x, $y) | Out-Null
+            [W6]::SetCursorPos($x, $y) | Out-Null
             Start-Sleep -Milliseconds 250
-            [W5]::mouse_event(0x0002, 0, 0, 0, 0)
+            [W6]::mouse_event(0x0002, 0, 0, 0, 0)
             Start-Sleep -Milliseconds 80
-            [W5]::mouse_event(0x0004, 0, 0, 0, 0)
+            [W6]::mouse_event(0x0004, 0, 0, 0, 0)
           }
           function Shot([string]$n) {
             $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -57,28 +61,37 @@ jobs:
           }
           function PostShot([string]$n) {
             Shot $n
-            $url = $null
-            try { $url = (curl.exe -s -F "file=@$n" https://0x0.st).Trim() } catch {}
-            if (-not $url -or $url -notmatch '^https?://') {
-              try { $url = (curl.exe -s -F "reqtype=fileupload" -F "fileToUpload=@$n" https://catbox.moe/user/api.php).Trim() } catch {}
-            }
+            New-Item -ItemType Directory -Force shots | Out-Null
+            Copy-Item $n "shots\$n" -Force
+            git add "shots/$n" 2>$null
+            git commit -q -m "shot $n" 2>$null
+            git push -q origin HEAD:shots -f 2>$null
+            $url = "https://raw.githubusercontent.com/noonutz/ro-grf-repack/shots/shots/$n"
             $files = Get-ChildItem C:\gate -Recurse -File -ErrorAction SilentlyContinue
             $sum = 0; if ($files) { $sum = ($files | Measure-Object Length -Sum).Sum }
-            Post ("{0} | gate {1:N0} MB / {2} files | shot: {3}" -f $n, ($sum / 1MB), $files.Count, $url)
+            Post ("{0} | gate {1:N0} MB / {2} files | {3}" -f $n, ($sum / 1MB), $files.Count, $url)
           }
-          $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
-          $cond = [System.Windows.Automation.Condition]::TrueCondition
+          function FindPicker {
+            $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+            return $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) |
+                     Where-Object { $_.Current.ClassName -eq '#32770' } | Select-Object -First 1
+          }
 
           Start-Process -FilePath .\wg\Warpgate.exe | Out-Null
-          Start-Sleep -Seconds 27
+          Start-Sleep -Seconds 30
           Click 672 679
-          Start-Sleep -Seconds 3
-          Click 507 310
-          Start-Sleep -Seconds 6
-          $dlg = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond) |
-                   Where-Object { $_.Current.ClassName -eq '#32770' } | Select-Object -First 1
+          Start-Sleep -Seconds 4
+          PostShot "o0-hall.png"
+
+          $dlg = $null
+          for ($try = 0; $try -lt 3 -and -not $dlg; $try++) {
+            Click 507 310
+            Start-Sleep -Seconds 9
+            $dlg = FindPicker
+            if (-not $dlg) { Post ("picker attempt {0} failed" -f $try) }
+          }
           if ($dlg) {
-            [W5]::SetForegroundWindow([IntPtr]$dlg.Current.NativeWindowHandle) | Out-Null
+            [W6]::SetForegroundWindow([IntPtr]$dlg.Current.NativeWindowHandle) | Out-Null
             Start-Sleep -Seconds 1
             Click 300 412
             Start-Sleep -Milliseconds 600
@@ -87,13 +100,15 @@ jobs:
             [System.Windows.Forms.SendKeys]::SendWait("C:\gate")
             Start-Sleep -Seconds 2
             Click 446 442
-            Start-Sleep -Seconds 6
-          } else { Post "no picker dialog" }
-          PostShot "o1-gate-created.png"
-          Click 420 207
-          Start-Sleep -Seconds 8
-          PostShot "o2-after-install-click.png"
-          for ($i = 0; $i -lt 12; $i++) {
+            Start-Sleep -Seconds 8
+            PostShot "o1-gate.png"
+            Click 420 207
+            Start-Sleep -Seconds 8
+            PostShot "o2-install.png"
+          } else {
+            Post "NO PICKER at all - aborting"
+          }
+          for ($i = 0; $i -lt 14; $i++) {
             Start-Sleep -Seconds 30
             PostShot ("o3-t{0}.png" -f $i)
           }
