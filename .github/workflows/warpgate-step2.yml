@@ -63,7 +63,15 @@ jobs:
           }
           Shot "s0-launch.png"
 
-          $steps = '${{ github.event.inputs.clicks }}' | ConvertFrom-Json
+          $raw = '${{ github.event.inputs.clicks }}'
+          $steps = @()
+          if ($raw -and $raw -ne '[]') {
+            $clean = $raw.Trim('[', ']')
+            foreach ($grp in ($clean -split '\],\s*\[')) {
+              $parts = ($grp.Trim('[', ']') -split ',')
+              if ($parts.Count -ge 3) { $steps += ,@([int]$parts[0], [int]$parts[1], [int]$parts[2]) }
+            }
+          }
           $i = 1
           foreach ($s in $steps) {
             Click ([int]$s[0]) ([int]$s[1])
@@ -75,6 +83,15 @@ jobs:
           Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match "warp|gate|legacy" } | Select-Object FullName | Out-String | Write-Host
           Get-ChildItem $env:USERPROFILE -Directory -ErrorAction SilentlyContinue | Select-Object Name | Out-String | Write-Host
+
+      - name: Inventory
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem $env:USERPROFILE -Recurse -Include *.grf, *.rgz -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+          Get-ChildItem $env:USERPROFILE -Directory -ErrorAction SilentlyContinue | Select-Object Name | Out-String | Write-Host
+          Get-ChildItem "$env:USERPROFILE\Documents" -Directory -ErrorAction SilentlyContinue | Select-Object Name | Out-String | Write-Host
 
       - uses: actions/upload-artifact@v4
         if: always()
