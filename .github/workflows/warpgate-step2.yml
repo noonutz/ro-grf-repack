@@ -101,6 +101,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          Write-Host "=== APPDATA\Warpgate tree ==="
+          Get-ChildItem "$env:APPDATA\Warpgate" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+          Write-Host "=== file contents (small text) ==="
+          Get-ChildItem "$env:APPDATA\Warpgate" -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -lt 20000 } | ForEach-Object {
+              Write-Host ("--- " + $_.FullName)
+              try { Get-Content $_.FullName -Raw -ErrorAction Stop | Write-Host } catch { Write-Host "<binary>" }
+            }
           Get-ChildItem $env:USERPROFILE -Recurse -Include *.grf, *.rgz -ErrorAction SilentlyContinue |
             Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
           Get-ChildItem $env:USERPROFILE -Directory -ErrorAction SilentlyContinue | Select-Object Name | Out-String | Write-Host
