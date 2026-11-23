@@ -1,0 +1,73 @@
+name: grf-repack
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Google Drive file id or URL of the client archive"
+        default: "19rp_QmWJPrFdWkrdn0QZW15znmjeMa2k"
+      inner:
+        description: "path of the GRF inside the archive"
+        default: "Data2026/data.grf"
+
+permissions:
+  contents: write
+
+jobs:
+  repack:
+    runs-on: windows-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gdown
+        shell: pwsh
+        run: pip install --quiet gdown
+
+      - name: Download client archive
+        shell: pwsh
+        run: gdown "${{ inputs.source }}" -O client.rar
+
+      - name: Extract the GRF
+        shell: pwsh
+        run: |
+          $seven = "C:\Program Files\7-Zip\7z.exe"
+          if (!(Test-Path $seven)) { choco install 7zip -y --no-progress }
+          & $seven x client.rar "${{ inputs.inner }}" -o".\src" -y
+          Get-ChildItem -Recurse .\src -Filter *.grf | Select-Object FullName, Length
+
+      - name: Install GRFEditor
+        shell: pwsh
+        run: |
+          curl.exe -sL -o grfe.zip https://github.com/Tokeiburu/GRFEditor/releases/download/v1.9.1.8/GRF.Editor.v1.9.1.8.zip
+          Expand-Archive grfe.zip -DestinationPath grfe -Force
+          Start-Process -FilePath ".\grfe\GRF Editor Installer.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/DIR=C:\grfe","/NORESTART" -Wait
+          Get-ChildItem C:\grfe | Select-Object -First 10 Name
+
+      - name: Repack to classic 0x200
+        shell: pwsh
+        run: |
+          $src = (Get-ChildItem -Recurse .\src -Filter data.grf | Select-Object -First 1).FullName
+          Write-Host "source: $src"
+          & "C:\grfe\GrfCL.exe" -open $src -changeVersion 0x200 -saveAs "$PWD\data_0200.grf"
+          if (!(Test-Path .\data_0200.grf)) { throw "repack produced no output" }
+          $b = [System.IO.File]::ReadAllBytes("$PWD\data_0200.grf")[0..15]
+          $magic = [System.Text.Encoding]::ASCII.GetString($b)
+          Write-Host "magic = $magic"
+          if ($magic -notlike "Master of Magic*") { throw "output is not a classic GRF" }
+
+      - name: Split into release-sized parts
+        shell: pwsh
+        run: |
+          & "C:\Program Files\7-Zip\7z.exe" a -v1400m -mx0 data_0200_parts.7z .\data_0200.grf
+          Get-ChildItem data_0200_parts.7z.* | Select-Object Name, Length
+
+      - name: Publish release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "grf-" + (Get-Date -Format "yyyyMMdd-HHmm")
+          gh release create $tag --title $tag --notes "data.grf repacked to classic 0x200"
+          Get-ChildItem data_0200_parts.7z.* | ForEach-Object { gh release upload $tag $_.FullName --clobber }
+          Write-Host "release: $tag"
