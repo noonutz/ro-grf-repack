@@ -102,9 +102,12 @@ jobs:
             Click 446 442
             Start-Sleep -Seconds 8
             PostShot "o1-gate.png"
+            Click 421 157
+            Start-Sleep -Seconds 6
+            PostShot "o2-client-tab.png"
             Click 866 515
             Start-Sleep -Seconds 8
-            PostShot "o2-install.png"
+            PostShot "o3-install.png"
           } else {
             Post "NO PICKER at all - aborting"
           }
