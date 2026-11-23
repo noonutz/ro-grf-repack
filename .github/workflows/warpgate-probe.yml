@@ -1,0 +1,63 @@
+name: warpgate-probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WARPGATE
+        shell: pwsh
+        run: |
+          curl.exe -sL -o wg.zip https://mirror2.romirrors.com/downloads/Warpgate.zip
+          Expand-Archive wg.zip -DestinationPath wg -Force
+          Get-ChildItem wg | Select-Object Name, Length
+
+      - name: Launch and inspect
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\wg\Warpgate.exe -PassThru
+          Start-Sleep -Seconds 30
+          Write-Host "process alive: $(-not $p.HasExited)"
+          Get-Process | Where-Object { $_.MainWindowTitle -ne "" } | Select-Object Id, ProcessName, MainWindowTitle | Format-Table -AutoSize | Out-String | Write-Host
+          # dump the UIAutomation tree of every top-level window
+          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+          $root = [System.Windows.Automation.AutomationElement]::RootElement
+          $cond = [System.Windows.Automation.Condition]::TrueCondition
+          $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)
+          $out = New-Object System.Collections.Generic.List[string]
+          function Dump($el, $depth) {
+            if ($depth -gt 6) { return }
+            try {
+              $ci = $el.Current
+              $out.Add(("{0}{1} | {2} | {3}" -f ("  " * $depth), $ci.ControlType.ProgrammaticName, $ci.Name, $ci.AutomationId))
+              $kids = $el.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+              foreach ($k in $kids) { Dump $k ($depth + 1) }
+            } catch {}
+          }
+          foreach ($w in $wins) { Dump $w 0 }
+          $out | Out-File -Encoding utf8 uia.txt
+          Write-Host "uia lines: $($out.Count)"
+
+      - name: Screenshot
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          Write-Host "screen: $($b.Width)x$($b.Height)"
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+          $bmp.Save("$PWD\screen.png", [System.Drawing.Imaging.ImageFormat]::Png)
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe
+          path: |
+            screen.png
+            uia.txt
