@@ -42,14 +42,27 @@ jobs:
           curl.exe -sL -o grfe.zip https://github.com/Tokeiburu/GRFEditor/releases/download/v1.9.1.8/GRF.Editor.v1.9.1.8.zip
           Expand-Archive grfe.zip -DestinationPath grfe -Force
           Start-Process -FilePath ".\grfe\GRF Editor Installer.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/DIR=C:\grfe","/NORESTART" -Wait
-          Get-ChildItem C:\grfe | Select-Object -First 10 Name
+          Write-Host "--- installed tree ---"
+          Get-ChildItem C:\grfe -Recurse -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 10 FullName
+          $cl = Get-ChildItem C:\grfe -Recurse -Filter GrfCL.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $cl) {
+            $cl = Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -Filter GrfCL.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $cl) { throw "GrfCL.exe not found after install" }
+          Write-Host "found: $($cl.FullName)"
+          # GrfCL ships GRF.dll embedded; a loose GRF.dll of a different build breaks it
+          # with "Method not found: GrfHeader.SetDecryption", so run it from a clean folder.
+          New-Item -ItemType Directory -Force C:\grfcli | Out-Null
+          Copy-Item $cl.FullName C:\grfcli\GrfCL.exe -Force
+          if (Test-Path ($cl.FullName + ".config")) { Copy-Item ($cl.FullName + ".config") C:\grfcli\GrfCL.exe.config -Force }
+          Get-ChildItem C:\grfcli | Select-Object Name, Length
 
       - name: Repack to classic 0x200
         shell: pwsh
         run: |
           $src = (Get-ChildItem -Recurse .\src -Filter data.grf | Select-Object -First 1).FullName
           Write-Host "source: $src"
-          & "C:\grfe\GrfCL.exe" -open $src -changeVersion 0x200 -saveAs "$PWD\data_0200.grf"
+          & "C:\grfcli\GrfCL.exe" -open $src -changeVersion 0x200 -saveAs "$PWD\data_0200.grf"
           if (!(Test-Path .\data_0200.grf)) { throw "repack produced no output" }
           $b = [System.IO.File]::ReadAllBytes("$PWD\data_0200.grf")[0..15]
           $magic = [System.Text.Encoding]::ASCII.GetString($b)
