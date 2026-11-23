@@ -90,8 +90,24 @@ jobs:
           $winsNow = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
           foreach ($w in $winsNow) {
             $c = $w.Current
-            Write-Host ("WINDOW '{0}' class={1} rect={2}" -f $c.Name, $c.ClassName, $c.BoundingRectangle)
+            Write-Host ("WINDOW '{0}' class={1} rect={2}x{3}" -f $c.Name, $c.ClassName, $c.BoundingRectangle.Width, $c.BoundingRectangle.Height)
           }
+          $dlg = $winsNow | Where-Object { $_.Current.ClassName -eq '#32770' -and $_.Current.Name -like 'WARPGATE*' } | Select-Object -First 1
+          if ($dlg) {
+            Write-Host "=== DIALOG TREE ==="
+            $lines = New-Object System.Collections.Generic.List[string]
+            function DumpEl($el, $d) {
+              if ($d -gt 12) { return }
+              try {
+                $c = $el.Current
+                $r = $c.BoundingRectangle
+                $lines.Add(("{0}{1} | '{2}' | id={3} | {4},{5} {6}x{7}" -f ("  " * $d), $c.ControlType.ProgrammaticName, $c.Name, $c.AutomationId, [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height))
+                foreach ($k in $el.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)) { DumpEl $k ($d + 1) }
+              } catch {}
+            }
+            DumpEl $dlg 0
+            $lines | ForEach-Object { Write-Host $_ }
+          } else { Write-Host "no dialog" }
           if ($keys) {
             Click 400 250
             Start-Sleep -Milliseconds 500
