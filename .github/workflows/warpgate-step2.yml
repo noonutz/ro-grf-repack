@@ -1,0 +1,83 @@
+name: warpgate-step2
+
+on:
+  workflow_dispatch:
+    inputs:
+      clicks:
+        description: "JSON list of [x,y,waitSeconds] clicks to perform after launch"
+        required: false
+        default: "[]"
+
+jobs:
+  step:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WARPGATE
+        shell: pwsh
+        run: |
+          curl.exe -sL -o wg.zip https://mirror2.romirrors.com/downloads/Warpgate.zip
+          Expand-Archive wg.zip -DestinationPath wg -Force
+
+      - name: Run with clicks
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class M {
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+            [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, int e);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int ht, bool r);
+          }
+          "@
+          function Click([int]$x, [int]$y) {
+            [M]::SetCursorPos($x, $y) | Out-Null
+            Start-Sleep -Milliseconds 250
+            [M]::mouse_event(0x0002, 0, 0, 0, 0)
+            Start-Sleep -Milliseconds 80
+            [M]::mouse_event(0x0004, 0, 0, 0, 0)
+            Write-Host "clicked $x,$y"
+          }
+          function Shot([string]$name) {
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$PWD\$name", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+            Write-Host "shot $name"
+          }
+
+          $p = Start-Process -FilePath .\wg\Warpgate.exe -PassThru
+          Start-Sleep -Seconds 28
+          $p.Refresh()
+          if ($p.MainWindowHandle -ne 0) {
+            [M]::MoveWindow($p.MainWindowHandle, 0, 0, 1024, 720, $true) | Out-Null
+            [M]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+            Start-Sleep -Seconds 2
+          }
+          Shot "s0-launch.png"
+
+          $steps = '${{ github.event.inputs.clicks }}' | ConvertFrom-Json
+          $i = 1
+          foreach ($s in $steps) {
+            Click ([int]$s[0]) ([int]$s[1])
+            Start-Sleep -Seconds ([int]$s[2])
+            Shot ("s{0}-after-{1}x{2}.png" -f $i, $s[0], $s[1])
+            $i++
+          }
+
+          Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match "warp|gate|legacy" } | Select-Object FullName | Out-String | Write-Host
+          Get-ChildItem $env:USERPROFILE -Directory -ErrorAction SilentlyContinue | Select-Object Name | Out-String | Write-Host
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shots
+          path: "*.png"
