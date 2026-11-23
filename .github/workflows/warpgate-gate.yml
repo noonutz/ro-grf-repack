@@ -64,11 +64,28 @@ jobs:
           [W]::SetForegroundWindow([IntPtr]$dlg.Current.NativeWindowHandle) | Out-Null
           Start-Sleep -Seconds 1
 
-          # type the path into the address bar
-          Click 200 50
-          Start-Sleep -Milliseconds 600
-          [System.Windows.Forms.SendKeys]::SendWait("C:\gate{ENTER}")
-          Start-Sleep -Seconds 3
+          # type the path into the "Folder:" field at the bottom of the picker
+          $edits = $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)))
+          $target = $null
+          foreach ($e in $edits) {
+            $r = $e.Current.BoundingRectangle
+            Write-Host ("edit '{0}' at {1},{2} {3}x{4}" -f $e.Current.Name, [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height)
+            if ($r.Y -gt 380) { $target = $e }
+          }
+          if ($target) {
+            $vp = $null
+            if ($target.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {
+              $vp.SetValue("C:\gate")
+              Write-Host "set value via ValuePattern"
+            } else {
+              $target.SetFocus()
+              Start-Sleep -Milliseconds 300
+              [System.Windows.Forms.SendKeys]::SendWait("^aC:\gate")
+              Write-Host "typed via SendKeys"
+            }
+          } else { Write-Host "no folder edit found" }
+          Start-Sleep -Seconds 2
           Shot "g3-typed.png"
 
           # find and press "Select Folder"
