@@ -85,6 +85,13 @@ jobs:
           }
 
           $keys = '${{ github.event.inputs.keys }}'
+          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+          $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+          $winsNow = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+          foreach ($w in $winsNow) {
+            $c = $w.Current
+            Write-Host ("WINDOW '{0}' class={1} rect={2}" -f $c.Name, $c.ClassName, $c.BoundingRectangle)
+          }
           if ($keys) {
             Click 400 250
             Start-Sleep -Milliseconds 500
