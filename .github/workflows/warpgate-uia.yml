@@ -1,0 +1,51 @@
+name: warpgate-uia
+
+on:
+  workflow_dispatch:
+
+jobs:
+  uia:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WARPGATE
+        shell: pwsh
+        run: |
+          curl.exe -sL -o wg.zip https://mirror2.romirrors.com/downloads/Warpgate.zip
+          Expand-Archive wg.zip -DestinationPath wg -Force
+
+      - name: Launch with accessibility and dump UIA
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--force-renderer-accessibility"
+          $p = Start-Process -FilePath .\wg\Warpgate.exe -PassThru
+          Start-Sleep -Seconds 30
+
+          $root = [System.Windows.Automation.AutomationElement]::RootElement
+          $tc = [System.Windows.Automation.Condition]::TrueCondition
+          $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $tc) | Where-Object { $_.Current.Name -eq "WARPGATE" }
+          Write-Host "warpgate windows: $($wins.Count)"
+
+          $out = New-Object System.Collections.Generic.List[string]
+          function Dump($el, $depth) {
+            if ($depth -gt 14) { return }
+            try {
+              $c = $el.Current
+              $r = $c.BoundingRectangle
+              $out.Add(("{0}{1} | '{2}' | id={3} | {4},{5} {6}x{7}" -f ("  " * $depth), $c.ControlType.ProgrammaticName, $c.Name, $c.AutomationId, [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height))
+              foreach ($k in $el.FindAll([System.Windows.Automation.TreeScope]::Children, $tc)) { Dump $k ($depth + 1) }
+            } catch {}
+          }
+          foreach ($w in $wins) { Dump $w 0 }
+          Write-Host "=== UIA TREE ==="
+          $out | ForEach-Object { Write-Host $_ }
+          $out | Out-File -Encoding utf8 uia-tree.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: uia
+          path: uia-tree.txt
