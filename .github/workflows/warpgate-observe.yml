@@ -106,6 +106,9 @@ jobs:
             Start-Sleep -Seconds 6
             PostShot "o2-client-tab.png"
             Click 866 515
+            Start-Sleep -Seconds 6
+            PostShot "o3a-runtime.png"
+            Click 660 516
             Start-Sleep -Seconds 8
             PostShot "o3-install.png"
           } else {
