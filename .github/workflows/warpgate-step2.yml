@@ -86,11 +86,15 @@ jobs:
 
           $keys = '${{ github.event.inputs.keys }}'
           if ($keys) {
-            Click 400 300
+            Click 400 250
             Start-Sleep -Milliseconds 500
-            [System.Windows.Forms.SendKeys]::SendWait($keys)
-            Start-Sleep -Seconds 3
-            Shot "s90-after-keys.png"
+            $ki = 1
+            foreach ($chunk in ($keys -split ',')) {
+              [System.Windows.Forms.SendKeys]::SendWait($chunk.Trim())
+              Start-Sleep -Milliseconds 900
+              Shot ("k{0}-keys.png" -f $ki)
+              $ki++
+            }
           }
 
           Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA -Directory -ErrorAction SilentlyContinue |
