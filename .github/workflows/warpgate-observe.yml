@@ -102,7 +102,7 @@ jobs:
             Click 446 442
             Start-Sleep -Seconds 8
             PostShot "o1-gate.png"
-            Click 420 207
+            Click 866 515
             Start-Sleep -Seconds 8
             PostShot "o2-install.png"
           } else {
