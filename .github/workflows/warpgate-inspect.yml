@@ -1,0 +1,45 @@
+name: warpgate-inspect
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WARPGATE
+        shell: pwsh
+        run: |
+          curl.exe -sL -o wg.zip https://mirror2.romirrors.com/downloads/Warpgate.zip
+          Expand-Archive wg.zip -DestinationPath wg -Force
+
+      - name: Run then dump appdata
+        shell: pwsh
+        run: |
+          Start-Process -FilePath .\wg\Warpgate.exe | Out-Null
+          Start-Sleep -Seconds 45
+          Write-Host "=== APPDATA\Warpgate ==="
+          Get-ChildItem "$env:APPDATA\Warpgate" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 250 | Write-Host
+          Write-Host "=== LOCALAPPDATA candidates ==="
+          Get-ChildItem $env:LOCALAPPDATA -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "warp|gate|legacy|com\." } | Select-Object FullName | Out-String | Write-Host
+          Write-Host "=== json contents ==="
+          Get-ChildItem "$env:APPDATA\Warpgate", "$env:LOCALAPPDATA" -Recurse -Include *.json -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -lt 3000000 } | ForEach-Object {
+              Write-Host ("--- " + $_.FullName + " (" + $_.Length + ")")
+              $raw = Get-Content $_.FullName -Raw
+              if ($raw.Length -gt 60000) { Write-Host $raw.Substring(0, 60000) } else { Write-Host $raw }
+            }
+          Write-Host "=== urls seen ==="
+          Get-ChildItem "$env:APPDATA\Warpgate", "$env:LOCALAPPDATA" -Recurse -Include *.json -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Select-String -Path $_.FullName -Pattern "https?://[^`"]+" -AllMatches -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.Matches.Value } } | Sort-Object -Unique | Select-Object -First 40 | Write-Host
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inspect
+          path: "*.png"
+          retention-days: 2
