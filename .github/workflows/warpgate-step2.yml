@@ -4,9 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       clicks:
-        description: "JSON list of [x,y,waitSeconds] clicks to perform after launch"
+        description: "clicks as [[x,y,waitSec],...]"
         required: false
         default: "[]"
+      keys:
+        description: "SendKeys sequence after clicks, e.g. {ENTER} or {TAB}{TAB}{ENTER}"
+        required: false
+        default: ""
 
 jobs:
   step:
@@ -78,6 +82,15 @@ jobs:
             Start-Sleep -Seconds ([int]$s[2])
             Shot ("s{0}-after-{1}x{2}.png" -f $i, $s[0], $s[1])
             $i++
+          }
+
+          $keys = '${{ github.event.inputs.keys }}'
+          if ($keys) {
+            Click 400 300
+            Start-Sleep -Milliseconds 500
+            [System.Windows.Forms.SendKeys]::SendWait($keys)
+            Start-Sleep -Seconds 3
+            Shot "s90-after-keys.png"
           }
 
           Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA -Directory -ErrorAction SilentlyContinue |
