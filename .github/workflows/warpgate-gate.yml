@@ -1,0 +1,101 @@
+name: warpgate-gate
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WARPGATE
+        shell: pwsh
+        run: |
+          curl.exe -sL -o wg.zip https://mirror2.romirrors.com/downloads/Warpgate.zip
+          Expand-Archive wg.zip -DestinationPath wg -Force
+
+      - name: Create gate folder and drive UI
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force C:\gate | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class W {
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+            [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, int e);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+          }
+          "@
+          function Click([int]$x, [int]$y) {
+            [W]::SetCursorPos($x, $y) | Out-Null
+            Start-Sleep -Milliseconds 250
+            [W]::mouse_event(0x0002, 0, 0, 0, 0)
+            Start-Sleep -Milliseconds 80
+            [W]::mouse_event(0x0004, 0, 0, 0, 0)
+            Write-Host "clicked $x,$y"
+          }
+          function Shot([string]$n) {
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$PWD\$n", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose(); Write-Host "shot $n"
+          }
+
+          Start-Process -FilePath .\wg\Warpgate.exe | Out-Null
+          Start-Sleep -Seconds 27
+          Click 672 679          # skip onboarding
+          Start-Sleep -Seconds 3
+          Click 511 431          # add existing folder
+          Start-Sleep -Seconds 7
+          Shot "g1-dialog.png"
+
+          $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+          $cond = [System.Windows.Automation.Condition]::TrueCondition
+          $dlg = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond) |
+                   Where-Object { $_.Current.ClassName -eq '#32770' } | Select-Object -First 1
+          if (-not $dlg) { Write-Host "NO DIALOG"; Shot "g2-nodialog.png"; exit 0 }
+          Write-Host "dialog hwnd=$($dlg.Current.NativeWindowHandle) name=$($dlg.Current.Name)"
+          [W]::SetForegroundWindow([IntPtr]$dlg.Current.NativeWindowHandle) | Out-Null
+          Start-Sleep -Seconds 1
+
+          # type the path into the address bar
+          Click 200 50
+          Start-Sleep -Milliseconds 600
+          [System.Windows.Forms.SendKeys]::SendWait("C:\gate{ENTER}")
+          Start-Sleep -Seconds 3
+          Shot "g3-typed.png"
+
+          # find and press "Select Folder"
+          $btn = $dlg.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.AndCondition(
+              (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Pane)),
+              (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Select Folder")))))
+          if ($btn) {
+            $r = $btn.Current.BoundingRectangle
+            Write-Host "select folder at $([int]$r.X),$([int]$r.Y) $([int]$r.Width)x$([int]$r.Height)"
+            Click ([int]($r.X + $r.Width / 2)) ([int]($r.Y + $r.Height / 2))
+          } else { Write-Host "no Select Folder button; pressing Enter"; [System.Windows.Forms.SendKeys]::SendWait("{ENTER}") }
+          Start-Sleep -Seconds 6
+          Shot "g4-after-select.png"
+
+          Write-Host "=== windows now ==="
+          $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond) | ForEach-Object {
+            Write-Host ("WINDOW '{0}' class={1}" -f $_.Current.Name, $_.Current.ClassName)
+          }
+          Write-Host "=== appdata ==="
+          Get-ChildItem "$env:APPDATA\Warpgate" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+          Get-ChildItem "$env:APPDATA\Warpgate" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -lt 20000 } | ForEach-Object {
+            Write-Host ("--- " + $_.FullName); try { Get-Content $_.FullName -Raw -ErrorAction Stop | Write-Host } catch { Write-Host "<bin>" }
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate
+          path: "*.png"
